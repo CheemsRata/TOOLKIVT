@@ -1,0 +1,720 @@
+;============================================================
+;  CheemsRata Ahk/Z Boost - AutoHotkey v2  |  
+;============================================================ 
+;============================================================
+; TOOLKIVT DEVELOPMENT RULES
+; 1. Si funciona, no toques mlp perro infeliz.
+;============================================================
+;====================================================
+; CHANGELOG
+;====================================================
+; v2.1 DEV
+; [✓] Help Button
+; [✓] Help Window
+; [✓] F1 Shortcut
+; [ ] About Window
+; [ ] Tooltips
+; [ ] UI Polish
+; [ ] Release
+;====================================================
+
+#Requires AutoHotkey v2.0
+#SingleInstance Force
+SetKeyDelay(-1, -1)
+SendMode("Input")
+CoordMode("Pixel", "Screen")
+global overlay
+global SoruText
+global StatusText
+global SkillText
+global CooldownText
+global BoostStatus
+global BoostKeyText
+
+;====================================================
+; PX/PY-TARGETCOLOR CONFIGURACIÓN
+;====================================================
+
+px := 1041
+py := 1048
+targetColor := 0xFFFFFF
+
+guiVisible := true  ; <<< NUEVO (F12)
+
+if !FileExist("keyIndex.txt")
+    FileAppend("1", "keyIndex.txt")
+keyIndex := (Trim(FileRead("keyIndex.txt")) ~= "^\d+$") ? Trim(FileRead("keyIndex.txt")) + 0 : 1
+
+;===============================
+; VARIABLES GLOBALES
+;===============================
+
+keyList := ["z","x","c","x+z","c+x"]
+running := true 
+lastFire := 0
+lockoutMs := 15200
+
+;===============================
+; Z BOOST
+;===============================
+global BOOST_KEY := "Tab"
+global Z_HOLD_TIME := 0
+global LAG_START_DELAY := 0
+global LAG_DURATION := 700
+global INTENSITY := 2
+global PROCESS_NAME := "RobloxPlayerBeta.exe"
+global Z_BOOST_ENABLED := true
+global g_BoostActive := false
+global g_ThrottleActive := false
+global g_QPCFreq := 0
+
+global FreezeTime := Round(INTENSITY * 5)
+global RunTime    := 1
+
+DllCall("QueryPerformanceFrequency", "Int64*", &g_QPCFreq)
+CalcTimings()
+{
+    global FreezeTime
+    global RunTime
+    global INTENSITY
+
+    FreezeTime := Max(1, Round(INTENSITY * 4))
+    RunTime := Max(1, Round(INTENSITY / 2))
+
+}
+validKeys := []
+Loop 26
+    validKeys.Push(Chr(A_Index + 96))
+Loop 12 {
+    fKey := "F" . A_Index
+    if !(fKey ~= "i)^(F1|F2|F3|F9|F10)$")
+        validKeys.Push(fKey)
+}
+validKeys.Push("R")
+validKeys.Push("XButton1")
+validKeys.Push("XButton2")
+
+ChooseValidKey() {
+    global validKeys
+
+    Loop {
+        triggerKey := WaitForKey("Key Soru selection")
+
+        if (triggerKey = "")
+            return ""
+
+        switch StrLower(triggerKey)
+        {
+            case "xbutton1":
+                triggerKey := "XButton1"
+
+            case "xbutton2":
+                triggerKey := "XButton2"
+
+            default:
+                triggerKey := StrUpper(triggerKey)
+        }
+
+        for _, v in validKeys {
+            if (StrUpper(v) = StrUpper(triggerKey))
+                return triggerKey
+        }
+
+        MsgBox("Key not supported!", "Error", 16)
+    }
+}
+;===============================
+; INICIALIZACIÓN
+;===============================
+
+
+;====================================================
+; GUI
+;====================================================
+
+InitSoruKey()
+{
+    global triggerKey
+
+    triggerKey := ""
+
+    if FileExist("triggerKey.txt")
+    {
+        triggerKey := Trim(FileRead("triggerKey.txt"))
+    }
+
+    if (triggerKey = "")
+    {
+        triggerKey := ChooseValidKey()
+
+        if (triggerKey = "")
+            ExitApp
+    }
+
+    FileDelete("triggerKey.txt")
+    FileAppend(triggerKey, "triggerKey.txt")
+}
+
+InitSoruKey()
+
+overlay := Gui("+AlwaysOnTop -Caption +ToolWindow -DPIScale")
+
+overlay.BackColor := "1E1E1E"
+overlay.MarginX := 15
+overlay.MarginY := 15
+
+;-------------------------
+; LOGOS / TITLE
+;-------------------------
+
+overlay.SetFont("cC95BFF s13 Bold","Segoe UI")
+overlay.Add("Text","x15 y15 w200 Center","🔰TOOLKIVT🔰")
+
+overlay.SetFont("c808080 s8","Segoe UI")
+overlay.Add("Text","x15 y38 w200 Center","Version 2.1")
+
+overlay.SetFont("cC95BFF s30", "Segoe UI Emoji")
+overlay.Add("Text", "x130 y438 w60 h60 ", "🔰")
+
+overlay.Add("Text","x15 y58 w200 h1 Background505050")
+
+;-------------------------
+; TRIGGER KEY
+;-------------------------
+
+overlay.SetFont("cFFFFFF s9","Segoe UI")
+overlay.Add("Text","x45 y72","Trigger Key")
+
+overlay.SetFont("cFFFFFF s12","Segoe UI")
+overlay.Add("Text", "x20 y66", "⌨")
+
+
+SoruText := overlay.Add(
+    "Button",
+    "x20 y92 w190 h30 Center",
+    triggerKey
+)
+SoruText.OnEvent("Click", ChangeKey)
+
+AddSeparator(overlay, 132)
+AddSeparator(overlay, 188)
+AddSeparator(overlay, 252)
+AddSeparator(overlay, 315)
+
+;-------------------------
+; STATUS
+;-------------------------
+
+overlay.SetFont("cFFFFFF s9","Segoe UI")
+overlay.Add("Text","x45 y145","Status")
+
+overlay.SetFont("cFFFFFF s12","Segoe UI")
+overlay.Add("Text", "x20 y140", "🎯")
+
+overlay.SetFont("c00FF66 s10 Bold","Segoe UI")
+
+StatusText := overlay.Add(
+    "Text",
+    "x20 y160 w190 Center",
+    "● Running"
+)
+
+overlay.Add("Text","x20 y188 w190 h1 Background404040")
+
+;-------------------------
+; CURRENT SKILL
+;-------------------------
+
+overlay.SetFont("cFFFFFF s9","Segoe UI")
+overlay.Add("Text","x45 y200 Center","Current Skill")
+
+overlay.SetFont("cFFFFFF s12","Segoe UI")
+overlay.Add("Text", "x20 y196", "⚔️")
+
+overlay.SetFont("cFFD84D s16 Bold","Segoe UI")
+
+SkillText := overlay.Add(
+    "Text",
+    "x20 y218 w190 Center",
+    StrUpper(keyList[keyIndex])
+)
+
+overlay.Add("Text","x20 y252 w190 h1 Background404040")
+
+;-------------------------
+; COOLDOWN
+;-------------------------
+
+overlay.SetFont("cFFFFFF s9","Segoe UI")
+overlay.Add("Text","x45 y264 Center","Cooldown")
+
+overlay.SetFont("cFFFFFF s12","Segoe UI")
+overlay.Add("Text", "x20 y260", "⏱")
+
+overlay.SetFont("c66CCFF s13 Bold","Segoe UI")
+
+CooldownText := overlay.Add(
+    "Text",
+    "x20 y287 w190 Center",
+    "READY"
+)
+
+overlay.Add("Text","x20 y315 w190 h1 Background404040")
+
+;-------------------------
+; Z BOOST
+;-------------------------
+
+overlay.SetFont("cFFFFFF s9 Bold","Segoe UI")
+overlay.Add("Text","x63 y327 Center","Boost")
+
+overlay.SetFont("cFFFFFF s12","Segoe UI")
+overlay.Add("Text", "x20 y323", "⚡")
+
+overlay.SetFont("cFFD84D s14","Segoe UI")
+overlay.Add("Text", "x45 y320", "Z")
+
+overlay.SetFont("c00FF66 s10 Bold","Segoe UI")
+
+BoostStatus := overlay.Add(
+    "Text",
+    "x20 y347 w190 Center",
+    "● Enabled"
+)
+
+overlay.SetFont("cFFFFFF s9","Segoe UI")
+overlay.Add("Text","x45 y372 Center","Boost Key")
+
+overlay.SetFont("cFFFFFF s12","Segoe UI")
+overlay.Add("Text", "x20 y366", "⌨")
+
+BoostKeyText := overlay.Add(
+    "Button",
+    "x20 y394 w190 h30 Center",
+    BOOST_KEY
+)
+
+BoostKeyText.OnEvent("Click", ChangeBoostKey)
+
+;-------------------------
+; FOOTER
+;-------------------------
+
+overlay.Add("Text","x15 y432 w200 h1 Background505050")
+
+overlay.SetFont("c707070 s8 Italic","Segoe UI")
+
+
+HelpBtn := overlay.Add(
+    "Button",
+    "x20 y440 w70 h22",
+    "Help"
+)
+
+HelpBtn.OnEvent("Click", ShowHelp)
+
+AboutBtn := overlay.Add(
+    "Button",
+    "x20 y470 w70 h22",
+    "About"
+)
+
+AboutBtn.OnEvent("Click", ShowAbout)
+
+overlay.Opt("+Resize -MinimizeBox -MaximizeBox")
+
+OnMessage(0x201, MoveGui)
+
+overlay.Show("w230 h500 x10 y10 NoActivate")
+
+SetTimer(UpdateCooldown,100)
+
+;====================================================
+; GUI FUNCTIONS
+;====================================================
+
+WaitForKey(title := "Press any key")
+{
+    keyGui := Gui("+AlwaysOnTop -Caption +ToolWindow")
+    keyGui.BackColor := "1E1E1E"
+
+    keyGui.SetFont("cC95BFF s11 Bold","Segoe UI")
+    keyGui.Add("Text","w260 Center",title)
+
+    keyGui.SetFont("cDDDDDD s10","Segoe UI")
+    keyGui.Add("Text","y+15 w260 Center","Key...!?")
+
+    keyGui.SetFont("c777777 s8","Segoe UI")
+    keyGui.Add("Text","y+8 w260 Center","ESC = Cancel")
+
+    keyGui.Show("w260 h110 Center")
+
+    Loop
+    {
+        Sleep(10)
+
+        Loop 254
+        {
+            vk := A_Index
+
+            if GetKeyState(Format("vk{:X}",vk),"P")
+            {
+                key := GetKeyName(Format("vk{:X}",vk))
+
+                keyGui.Destroy()
+
+                if (key = "Escape")
+                    return ""
+
+                return key
+            }
+        }
+    }
+}
+
+ChangeKey(*)
+{
+    global triggerKey, SoruText, running
+
+    oldKey := triggerKey
+
+    try Hotkey("*" oldKey, "Off")
+
+    newKey := ChooseValidKey()
+
+    if (newKey = "")
+    {
+        if (running)
+            Hotkey("*" oldKey, (*) => SpamFunc(), "On")
+        return
+    }
+
+    triggerKey := newKey
+
+    FileDelete("triggerKey.txt")
+    FileAppend(triggerKey, "triggerKey.txt")
+
+    SoruText.Text := triggerKey
+
+    if (running)
+        Hotkey("*" triggerKey, (*) => SpamFunc(), "On")
+}
+
+ChangeBoostKey(*)
+{
+    global BOOST_KEY, BoostKeyText
+
+    newKey := WaitForKey("Select Boost Key")
+
+    if (newKey = "")
+        return
+
+    try Hotkey(BOOST_KEY, "Off")
+
+    BOOST_KEY := newKey
+
+    BoostKeyText.Text := BOOST_KEY
+
+    Hotkey(BOOST_KEY, TriggerBoost, "On")
+}
+
+MoveGui(wParam, lParam, msg, hwnd)
+{
+    global overlay
+
+    if (hwnd != overlay.Hwnd)
+        return
+
+    PostMessage(0xA1,2,,, "A")
+    return 0
+}
+
+AddSeparator(gui, y)
+{
+    gui.Add("Text", "x20 y" y " w190 h1 Background404040")
+}
+
+AddSectionTitle(gui, text, x, y)
+{
+    gui.SetFont("cFFFFFF s9", "Segoe UI")
+    gui.Add("Text", "x" x " y" y, text)
+}
+
+UpdateCooldown()
+{
+    global CooldownText
+    global lastFire
+    global lockoutMs
+
+    elapsed := A_TickCount - lastFire
+    remaining := lockoutMs - elapsed
+
+    if (remaining <= 0)
+    {
+        CooldownText.Text := "READY"
+        return
+    }
+
+    CooldownText.Text := Round(remaining / 1000,1) " s"
+}
+
+
+
+;===============================
+; WINDOWS
+;===============================
+
+F1::ShowHelp()
+ShowHelp(*)
+{
+    help := Gui("+AlwaysOnTop +ToolWindow")
+
+    help.BackColor := "1E1E1E"
+
+    help.SetFont("cC95BFF s13 Bold","Segoe UI")
+    help.Add("Text","w320 Center","🔰TOOLKIVT HELP🔰")
+
+    help.Add("Text","y+15 cFFFFFF",
+"
+(
+⌨ HOTKEYS
+────────────────────────
+
+F1   Open Help
+F4   Change Skill
+F9   Pixel Debug
+F10  Exit Toolkit
+F11  Pause / Resume
+F12  Hide / Show GUI
+
+🖱 CONTROLS
+────────────────────────
+
+Trigger Key
+• Change the activation key.
+• Py and Px must be configured manually.
+
+Boost Key
+• Change the Z Boost key.
+
+💡 TIPS
+────────────────────────
+
+• Hold the Trigger Key.
+• Cooldown prevents repeated casts.
+• Settings are saved automatically.
+
+────────────────────────
+TOOLKIVT v2.1
+)")
+
+    help.Add("Button","w100 Center y+15","Close")
+        .OnEvent("Click", (*) => help.Destroy())
+
+    help.Show()
+}
+
+
+ShowAbout(*)
+{
+    about := Gui("+AlwaysOnTop +ToolWindow")
+    about.BackColor := "1E1E1E"
+
+    about.SetFont("cC95BFF s13 Bold","Segoe UI")
+    about.Add("Text","w200 Center","🔰ABOUT🔰")
+
+    about.SetFont("cFFFFFF s10","Segoe UI")
+    about.Add("Text","w200 Center",
+    "
+(
+         
+Version 2.1 
+
+Quality of Life Update
+
+Created by
+CheemsRata
+
+Special Thanks
+• Dekky
+• Nore
+
+Powered by
+AutoHotkey v2
+
+)")
+
+    about.Add("Button","w200 Center y+15","Close")
+        .OnEvent("Click", (*) => about.Destroy())
+
+    about.Show()
+}
+
+;===============================
+; HOTKEYS
+;===============================
+; ---- CAMBIAR SKILL ----
+F4:: {
+    global keyIndex, keyList, SkillText
+    keyIndex := (keyIndex >= keyList.Length) ? 1 : keyIndex + 1
+    FileDelete("keyIndex.txt")
+    FileAppend(keyIndex, "keyIndex.txt")
+    SkillText.Text := " " . StrUpper(keyList[keyIndex])
+}
+
+F2::Return
+
+; ---- PAUSA ----
+F11:: {
+    global running, triggerKey, StatusText
+    running := !running
+    Hotkey("*" . triggerKey, running ? "On" : "Off")
+
+if running {
+StatusText.SetFont("c00FF66 s10 Bold", "Segoe UI")
+    StatusText.Text := "● Running"
+} else {
+    StatusText.SetFont("cFF4040 s10 Bold", "Segoe UI")
+    StatusText.Text := "■ Paused"
+}
+}
+
+; ---- OCULTAR / MOSTRAR GUI (NUEVO) ----
+F12:: {
+    global overlay, guiVisible
+    guiVisible := !guiVisible
+    if guiVisible
+        overlay.Show("NoActivate")
+    else
+        overlay.Hide()
+}
+F9:: {
+    MouseGetPos(&mx, &my)
+    color := PixelGetColor(mx, my)
+    ToolTip("X: " mx " Y: " my " Color: " color)
+    SetTimer(() => ToolTip(), -2000)
+}
+
+F10::ExitApp
+
+SpamFunc(*) {
+    global running, px, py, targetColor, keyIndex, keyList, lastFire, lockoutMs, triggerKey
+    cleanKey := RegExReplace(triggerKey, "^\*")
+    while GetKeyState(cleanKey, "P") {
+        if !running
+            return
+
+        SendInput("{r}")
+        Sleep(50)
+
+        now := A_TickCount
+        if (now - lastFire < lockoutMs)
+            continue
+
+        if (PixelGetColor(px, py) != targetColor) {
+
+    key := keyList[keyIndex]
+
+    if (key = "x+z") {
+        Send("{x}")
+        Sleep 500
+        Send("{z}")
+    } else if (key = "c+x") {
+        Send("{c}")
+        Sleep 100
+        Send("{x}")
+    } else {
+        Send("{" key "}")
+    }
+
+    lastFire := A_TickCount
+}
+    }
+}
+
+Hotkey("*" . triggerKey, (*) => SpamFunc())
+Hotkey(BOOST_KEY, TriggerBoost)
+
+SuspendProcess(pid)
+{
+    hProcess := DllCall("OpenProcess", "UInt", 0x0800, "Int", 0, "UInt", pid, "Ptr")
+
+    if hProcess
+    {
+        DllCall("ntdll\NtSuspendProcess", "Ptr", hProcess)
+        DllCall("CloseHandle", "Ptr", hProcess)
+    }
+}
+
+ResumeProcess(pid)
+{
+    hProcess := DllCall("OpenProcess", "UInt", 0x0800, "Int", 0, "UInt", pid, "Ptr")
+
+    if hProcess
+    {
+        DllCall("ntdll\NtResumeProcess", "Ptr", hProcess)
+        DllCall("CloseHandle", "Ptr", hProcess)
+    }
+}
+
+PreciseSleep(ms)
+{
+    global g_QPCFreq
+
+    ticks := ms * g_QPCFreq / 1000
+
+    start := 0
+    DllCall("QueryPerformanceCounter", "Int64*", &start)
+
+    now := start
+
+    while (now - start < ticks)
+        DllCall("QueryPerformanceCounter", "Int64*", &now)
+}
+
+TriggerBoost(*)
+{
+    global g_BoostActive
+    global Z_BOOST_ENABLED
+    global PROCESS_NAME
+    global Z_HOLD_TIME
+    global LAG_START_DELAY
+    global LAG_DURATION
+
+    if (!Z_BOOST_ENABLED || g_BoostActive)
+        return
+
+    pid := ProcessExist(PROCESS_NAME)
+
+    if !pid
+        return
+
+    g_BoostActive := true
+
+    Send("{}")
+
+    SetTimer(() => Send("{}"), -Z_HOLD_TIME)
+
+    if (LAG_START_DELAY > 0)
+        PreciseSleep(LAG_START_DELAY)
+
+    DllCall("winmm\timeBeginPeriod", "UInt", 1)
+
+    start := A_TickCount
+
+    CalcTimings()
+    while (A_TickCount - start < LAG_DURATION)
+    {
+        SuspendProcess(pid)
+        PreciseSleep(FreezeTime)
+
+        ResumeProcess(pid)
+        PreciseSleep(RunTime)
+    }
+
+    DllCall("winmm\timeEndPeriod", "UInt", 1)
+
+    ResumeProcess(pid)
+
+    g_BoostActive := false
+}
