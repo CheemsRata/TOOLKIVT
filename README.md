@@ -1,4 +1,4 @@
-## TOOLKIVT
+# TOOLKIVT
 
 A lightweight AutoHotkey v2 toolkit designed to improve gameplay with a clean overlay, customizable controls and quality-of-life features.
 
